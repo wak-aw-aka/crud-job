@@ -1,0 +1,11 @@
+WITH calc AS (
+    SELECT id, -- укажите имя PK таблицы SHOPS
+           ROUND((COALESCE(LONG_STACK_COUNT, 0) / 1.5) - COALESCE(LONG_STACK_COUNT, 0) 
+                 + COALESCE(STACK_COUNT, 0) - COALESCE(SHORT_STACK_COUNT, 0)) AS val
+    FROM SHOPS
+)
+UPDATE SHOPS s
+JOIN calc c ON s.id = c.id
+LEFT JOIN SHOP_FORMATS_STACK_RANGE f ON c.val BETWEEN f.STACK_FROM AND f.STACK_TO
+SET s.STACK_RECALC_COUNT = c.val,
+    s.STORE_CLASS = COALESCE(f.FORMAT, 'Диапозон количества стеллажей "Формат MX" задан не верно');
