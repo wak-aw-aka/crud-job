@@ -1,11 +1,22 @@
-UPDATE SHOPS s
-LEFT JOIN SHOP_FORMATS_STACK_RANGE f
-  ON ROUND(
-       (COALESCE(s.LONG_STACK_COUNT, 0) / 1.5) - COALESCE(s.LONG_STACK_COUNT, 0) 
-       + COALESCE(s.STACK_COUNT, 0) - COALESCE(s.SHORT_STACK_COUNT, 0)
-     ) BETWEEN f.STACK_FROM AND f.STACK_TO
-SET s.STACK_RECALC_COUNT = ROUND(
-       (COALESCE(s.LONG_STACK_COUNT, 0) / 1.5) - COALESCE(s.LONG_STACK_COUNT, 0) 
-       + COALESCE(s.STACK_COUNT, 0) - COALESCE(s.SHORT_STACK_COUNT, 0)
-     ),
-    s.STORE_CLASS = COALESCE(f.FORMAT, 'Диапозон количества стеллажей "Формат MX" задан не верно');
+MERGE INTO SHOPS s
+USING (
+    SELECT 
+        s.ROWID AS r_id, -- Уникальный идентификатор строки в Oracle
+        calc_val,
+        COALESCE(f.FORMAT, 'Диапозон количества стеллажей "Формат MX" задан не верно') AS new_class
+    FROM SHOPS s
+    CROSS JOIN LATERAL (
+        SELECT ROUND(
+            (COALESCE(s.LONG_STACK_COUNT, 0) / 1.5) - COALESCE(s.LONG_STACK_COUNT, 0) 
+            + COALESCE(s.STACK_COUNT, 0) - COALESCE(s.SHORT_STACK_COUNT, 0)
+        ) AS calc_val 
+        FROM DUAL
+    ) c
+    LEFT JOIN SHOP_FORMATS_STACK_RANGE f
+        ON c.calc_val BETWEEN f.STACK_FROM AND f.STACK_TO
+) src
+ON (s.ROWID = src.r_id)
+WHEN MATCHED THEN 
+    UPDATE SET 
+        s.STACK_RECALC_COUNT = src.calc_val,
+        s.STORE_CLASS = src.new_class;
