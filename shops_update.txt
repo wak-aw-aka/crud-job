@@ -20,3 +20,65 @@ WHEN MATCHED THEN
     UPDATE SET 
         s.STACK_RECALC_COUNT = src.calc_val,
         s.STORE_CLASS = src.new_class;
+
+
+
+
+------------------------------------
+CREATE OR REPLACE PROCEDURE prc_recalc_shop_stacks (
+    p_loc_filter IN VARCHAR2 DEFAULT NULL -- Параметр для фильтрации (если NULL, обновит все магазины)
+) IS
+    v_rows_updated NUMBER;
+    v_error_msg  VARCHAR2(4000);
+BEGIN
+    -- Оптимизированный MERGE без избыточного CROSS JOIN LATERAL и DUAL
+    MERGE INTO SHOPS dest
+    USING (
+        SELECT 
+            s.LOC,
+            -- Вычисляем значение напрямую, без подзапроса к DUAL
+            ROUND(
+                (COALESCE(s.LONG_STACK_COUNT, 0) / 1.5) 
+                - COALESCE(s.LONG_STACK_COUNT, 0) 
+                + COALESCE(s.STACK_COUNT, 0) 
+                - COALESCE(s.SHORT_STACK_COUNT, 0)
+            ) AS calc_val,
+            -- COALESCE(f.FORMAT, NULL) избыточен, достаточно просто f.FORMAT
+            f.FORMAT AS new_class
+        FROM SHOPS s
+        LEFT JOIN SHOP_FORMATS_STACK_RANGE f
+            ON ROUND(
+                (COALESCE(s.LONG_STACK_COUNT, 0) / 1.5) 
+                - COALESCE(s.LONG_STACK_COUNT, 0) 
+                + COALESCE(s.STACK_COUNT, 0) 
+                - COALESCE(s.SHORT_STACK_COUNT, 0)
+            ) BETWEEN f.STACK_FROM AND f.STACK_TO
+        WHERE (p_loc_filter IS NULL OR s.LOC = p_loc_filter)
+    ) src
+    ON (dest.LOC = src.LOC)
+    WHEN MATCHED THEN 
+        UPDATE SET 
+            dest.STACK_RECALC_COUNT = src.calc_val,
+            dest.STORE_CLASS        = src.new_class
+        -- Важная оптимизация: обновляем только те строки, где данные реально изменились.
+        -- Это экономит ресурсы СУБД (undo/redo логи) и ускоряет выполнение.
+        WHERE dest.STACK_RECALC_COUNT != src.calc_val 
+           OR dest.STORE_CLASS        != src.new_class 
+           OR (dest.STACK_RECALC_COUNT IS NULL AND src.calc_val IS NOT NULL)
+           OR (dest.STORE_CLASS        IS NULL AND src.new_class IS NOT NULL);
+
+    v_rows_updated := SQL%ROWCOUNT;
+    COMMIT;
+    
+    DBMS_OUTPUT.PUT_LINE('Успешно обновлено строк: ' || v_rows_updated);
+
+EXCEPTION
+    WHEN OTHERS THEN
+        v_error_msg := SQLERRM;
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('Ошибка при выполнении процедуры: ' || v_error_msg);
+        -- Здесь можно добавить запись в таблицу логов, если она есть:
+        -- INSERT INTO error_log (proc_name, error_msg, log_date) VALUES ('prc_recalc_shop_stacks', v_error_msg, SYSDATE);
+        RAISE;
+END prc_recalc_shop_stacks;
+/
