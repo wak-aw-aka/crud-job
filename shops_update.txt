@@ -105,3 +105,41 @@ END prc_recalc_shop_stacks;
       UPDATE SET 
           s.STACK_RECALC_COUNT = src.calc_val,
           s.STORE_CLASS = src.new_class;
+---------------------------------------------------------------------------
+
+CREATE OR REPLACE TRIGGER trg_shops_calc_fields
+BEFORE INSERT OR UPDATE OF LONG_STACK_COUNT, STACK_COUNT, SHORT_STACK_COUNT ON SHOPS
+FOR EACH ROW
+DECLARE
+    v_calc_val  NUMBER;
+    v_format    VARCHAR2(50); -- Замените 50 на реальную длину столбца FORMAT
+BEGIN
+    -- 1. Рассчёт значения (эмуляция PHP round() с обработкой NULL)
+    v_calc_val := ROUND(
+        (COALESCE(:NEW.LONG_STACK_COUNT, 0) / 1.5) - COALESCE(:NEW.LONG_STACK_COUNT, 0) 
+        + COALESCE(:NEW.STACK_COUNT, 0) - COALESCE(:NEW.SHORT_STACK_COUNT, 0)
+    );
+
+    -- 2. Записываем расчётное поле
+    :NEW.STACK_RECALC_COUNT := v_calc_val;
+
+    -- 3. Ищем соответствующий формат из справочника
+    BEGIN
+        SELECT FORMAT
+        INTO v_format
+        FROM SHOP_FORMATS_STACK_RANGE
+        WHERE v_calc_val BETWEEN STACK_FROM AND STACK_TO
+        AND ROWNUM = 1; -- Защита от TOO_MANY_ROWS при пересекающихся диапазонах
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_format := 'M0'; -- Значение по умолчанию (как в вашем запросе)
+        WHEN TOO_MANY_ROWS THEN
+            -- Если диапазоны пересекаются, берём первый попавшийся. 
+            -- В идеале диапазоны не должны пересекаться.
+            v_format := 'M0'; 
+    END;
+
+    -- 4. Записываем класс магазина
+    :NEW.STORE_CLASS := v_format;
+END;
+/
